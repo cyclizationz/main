@@ -65,7 +65,7 @@ ln -sf $(pwd)/qemu-system-x86_64 ~/bin/qemu-QuicKeys
 
 ## Python client (UDP edges + QUIC snapshots)
 ```bash
-cd QuicKeys/client
+cd client
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 ```
@@ -73,16 +73,16 @@ pip install -r requirements.txt
 ## Run
 - Start daemon (creates /run/hid.kbd and emits HID reports):
 ```bash
-QuicKeys/scripts/run_daemon.sh
+scripts/run_daemon.sh
 ```
 - Start QEMU:
 ```bash
-QuicKeys/scripts/run_qemu.sh
+scripts/run_qemu.sh
 ```
 - Send edges (UDP) and snapshots (QUIC):
 ```bash
-python client.py --target 127.0.0.1 --udp-port 4444 --script "apt ENTER"
-python quic_snapshots.py --host 127.0.0.1 --port 4445 --hz 120
+python client/client.py --target 127.0.0.1 --udp-port 4444 --script "apt ENTER"
+python client/quic_snapshots.py --host 127.0.0.1 --port 4445 --hz 120
 ```
 
 See `scripts/netem.sh` for loss/jitter emulation.

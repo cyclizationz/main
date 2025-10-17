@@ -1,11 +1,11 @@
 #include <iostream>
 #include <unordered_set>
-#include <utility>
 #include <vector>
 #include <string>
 #include <thread>
 #include <atomic>
 #include <csignal>
+#include <chrono>
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <unistd.h>
@@ -23,9 +23,10 @@ static std::atomic<bool> g_running{true};
 struct Args {
     std::string udp_bind = "0.0.0.0";
     uint16_t udp_port = 4444;
-    std::string hid_socket = "/run/hid.kbd";
+    std::string hid_socket = "/tmp/hidra.kbd";
     int watchdog_ms = 200;
     int deadline_ms = 100;
+    bool verbose = false;
 };
 
 static void parse_args(int argc, char** argv, Args& a) {
@@ -34,7 +35,7 @@ static void parse_args(int argc, char** argv, Args& a) {
         auto next = [&]{ return (i+1<argc) ? std::string(argv[++i]) : std::string(); };
         if (s == "--udp-edges") {
             auto v = next();
-            auto pos = v.find(':');
+            auto pos = v.find(':'); 
             if (pos != std::string::npos) {
                 a.udp_bind = v.substr(0,pos);
                 a.udp_port = static_cast<uint16_t>(std::stoi(v.substr(pos+1)));
@@ -45,55 +46,75 @@ static void parse_args(int argc, char** argv, Args& a) {
             a.watchdog_ms = std::stoi(next());
         } else if (s == "--deadline-ms") {
             a.deadline_ms = std::stoi(next());
+        } else if (s == "--verbose" || s == "-v") {
+            a.verbose = true;
         }
     }
 }
 
 class HidSocket {
 public:
-    explicit HidSocket(std::string path) : path_(std::move(path)) { connect(); }
+    explicit HidSocket(const std::string& path, bool verbose=false) : path_(path), verbose_(verbose) {}
     ~HidSocket() { if (fd_>=0) close(fd_); }
-    void send_report(const HidReport8& r) {
-        if (fd_ < 0) { connect(); }
-        if (fd_ >= 0) {
-            ::send(fd_, r.bytes.data(), r.bytes.size(), MSG_NOSIGNAL);
-        }
-    }
-private:
-    void connect() {
-        if (fd_>=0) { close(fd_); fd_=-1; }
+
+    bool ensure_connected() {
+        if (fd_ >= 0) return true;
         fd_ = ::socket(AF_UNIX, SOCK_STREAM, 0);
-        if (fd_ < 0) return;
+        if (fd_ < 0) return false;
         sockaddr_un addr{};
         addr.sun_family = AF_UNIX;
         std::snprintf(addr.sun_path, sizeof(addr.sun_path), "%s", path_.c_str());
-        if (::connect(fd_, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) < 0)
-        {
+        if (::connect(fd_, (sockaddr*)&addr, sizeof(addr)) < 0) {
+            if (verbose_) std::cerr << "[hidra] HID socket connect failed (" << path_
+                                    << "). Waiting for QEMU to listen... (set HID_SOCK or run scripts/run_qemu.sh)\n";
+            close(fd_); fd_ = -1;
+            return false;
+        }
+        if (verbose_) std::cerr << "[hidra] Connected to HID socket: " << path_ << "\n";
+        return true;
+    }
+
+    void send_report(const HidReport8& r) {
+        if (fd_ < 0 && !ensure_connected()) return;
+        ssize_t n = ::send(fd_, r.bytes.data(), r.bytes.size(), MSG_NOSIGNAL);
+        if (n < 0) {
+            if (verbose_) std::cerr << "[hidra] send() failed; will retry connect\n";
             close(fd_); fd_ = -1;
         }
     }
+private:
     std::string path_;
     int fd_ = -1;
+    bool verbose_ = false;
 };
 
 int main(int argc, char** argv) {
     Args args;
-    parse_args(argc, argv, args);
+    parse_args(argc, argv);
 
     signal(SIGINT, [](int){ g_running=false; });
     signal(SIGTERM, [](int){ g_running=false; });
 
-    HidSocket hid(args.hid_socket);
+    if (args.verbose) {
+        std::cerr << "[hidra] daemon starting\n"
+                  << "  udp edges : " << args.udp_bind << ":" << args.udp_port << "\n"
+                  << "  hid socket: " << args.hid_socket << " (QEMU should be server=on)\n"
+                  << "  watchdog  : " << args.watchdog_ms << " ms\n"
+                  << "  deadline  : " << args.deadline_ms << " ms\n";
+    }
 
-    // Authoritative pressed set (demo). In full build, maintain both working and authoritative sets.
+    HidSocket hid(args.hid_socket, args.verbose);
+
     std::unordered_set<uint8_t> pressed;
     uint8_t modifiers = 0x00;
 
-    // UDP edges (quick path)
     boost::asio::io_context io;
     udp::socket sock(io, udp::endpoint(boost::asio::ip::make_address(args.udp_bind), args.udp_port));
     std::array<char,1024> buf{};
     udp::endpoint sender;
+
+    uint64_t cnt_rx = 0, cnt_emit = 0;
+    auto last_beat = std::chrono::steady_clock::now();
 
 #ifdef HAVE_MSQUIC
     MsQuicServer quicServer;
@@ -104,7 +125,9 @@ int main(int argc, char** argv) {
             for (auto u : pressed) { if (v.size() < 6) v.push_back(u); }
             auto report = build_hid_report(v, modifiers);
             hid.send_report(report);
+            ++cnt_emit;
         });
+    if (args.verbose) std::cerr << "[hidra] msquic snapshot listener on :4445 (ALPN hidra-snp)\n";
 #endif
 
     while (g_running) {
@@ -112,7 +135,6 @@ int main(int argc, char** argv) {
         size_t n = sock.receive_from(boost::asio::buffer(buf), sender, 0, ec);
         if (ec) continue;
         std::string s(buf.data(), n);
-        // Very simple demo protocol: "down a" or "up a"
         std::string cmd, key;
         auto sp = s.find(' ');
         if (sp != std::string::npos) {
@@ -136,7 +158,20 @@ int main(int argc, char** argv) {
             for (auto u : pressed) { if (v.size() < 6) v.push_back(u); }
             auto report = build_hid_report(v, modifiers);
             hid.send_report(report);
+            ++cnt_emit;
         }
+        ++cnt_rx;
+
+        auto now = std::chrono::steady_clock::now();
+        if (args.verbose && std::chrono::duration_cast<std::chrono::seconds>(now - last_beat).count() >= 2) {
+            std::cerr << "[hidra] progress: rx=" << cnt_rx << " emits=" << cnt_emit
+                      << " socket=" << (hid.ensure_connected() ? "connected" : "waiting") << "\n";
+            last_beat = now;
+        }
+    }
+
+    if (args.verbose) {
+        std::cerr << "[hidra] shutting down. totals: rx=" << cnt_rx << " emits=" << cnt_emit << "\n";
     }
     return 0;
 }
