@@ -1,5 +1,6 @@
 #include <iostream>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 #include <string>
 #include <thread>
@@ -50,7 +51,7 @@ static void parse_args(int argc, char** argv, Args& a) {
 
 class HidSocket {
 public:
-    explicit HidSocket(const std::string& path) : path_(path) { connect(); }
+    explicit HidSocket(std::string path) : path_(std::move(path)) { connect(); }
     ~HidSocket() { if (fd_>=0) close(fd_); }
     void send_report(const HidReport8& r) {
         if (fd_ < 0) { connect(); }
@@ -66,7 +67,8 @@ private:
         sockaddr_un addr{};
         addr.sun_family = AF_UNIX;
         std::snprintf(addr.sun_path, sizeof(addr.sun_path), "%s", path_.c_str());
-        if (::connect(fd_, (sockaddr*)&addr, sizeof(addr)) < 0) {
+        if (::connect(fd_, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) < 0)
+        {
             close(fd_); fd_ = -1;
         }
     }
@@ -76,7 +78,7 @@ private:
 
 int main(int argc, char** argv) {
     Args args;
-    parse_args(argc, argv);
+    parse_args(argc, argv, args);
 
     signal(SIGINT, [](int){ g_running=false; });
     signal(SIGTERM, [](int){ g_running=false; });
