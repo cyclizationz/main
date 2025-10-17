@@ -1,0 +1,21 @@
+syntax = "proto3";
+package remoter.input;
+
+message Header {
+  uint32 version = 1;    // 1
+  uint32 seq     = 2;    // per-channel monotonic
+  uint64 t_ms    = 3;    // client monotonic ms
+}
+
+message Edge {
+  Header hdr = 1;
+  uint32 hid_usage = 2;   // USB HID usage (Keyboard page 0x07)
+  bool   is_down   = 3;   // true=keydown, false=keyup
+  uint32 modifiers = 4;   // Shift/Ctrl/Alt/Meta bitmask
+}
+
+message Snapshot {
+  Header hdr = 1;
+  uint32 modifiers = 2;
+  bytes  pressed_bitmap = 3; // e.g., 256 bits
+}

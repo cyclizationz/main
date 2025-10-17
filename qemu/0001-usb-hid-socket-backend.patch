@@ -1,0 +1,121 @@
+From 1111111111111111111111111111111111111111 Mon Sep 17 00:00:00 2001
+From: You <you@example.com>
+Date: Fri, 17 Oct 2025 12:00:00 -0400
+Subject: [PATCH] usb-hid: add socket-backed keyboard report input (8-byte reports)
+
+This minimal skeleton adds a chardev-backed input path to the USB HID keyboard
+that reads 8-byte keyboard reports from a QEMU chardev (e.g., a Unix socket)
+and injects them into the emulated device. It is intentionally minimal and
+may require adaptation to your exact QEMU version.
+
+Usage example:
+  -chardev socket,id=hidkbd,path=/run/hid.kbd,server,nowait
+  -device usb-kbd,chardev=hidkbd
+
+The daemon writes 8-byte keyboard reports of the form:
+  [mods][0x00][k0][k1][k2][k3][k4][k5]
+
+--- a/hw/usb/dev-hid.c
++++ b/hw/usb/dev-hid.c
+@@ -20,6 +20,8 @@
+ #include "qapi/error.h"
+ #include "qemu/module.h"
+ #include "migration/vmstate.h"
++#include "chardev/char-fe.h"
++
+
+ /* NOTE: This patch is a skeleton; symbol names may differ across QEMU versions.
+  * You may need to adjust field names, function signatures, or include paths.
+  */
+@@ -50,6 +52,16 @@ typedef struct USBHIDState {
+     uint8_t idle;
+     uint8_t protocol;
+     uint8_t leds;
++
++    /* Socket-backed input */
++    CharBackend kbd_chr;
++    uint8_t sock_buf[8];
++    int sock_len;
+ } USBHIDState;
+
++static int usb_kbd_chr_can_read(void *opaque)
++{
++    USBHIDState *s = opaque;
++    return 8 - s->sock_len;
++}
++
++static void usb_kbd_push_report(USBHIDState *s, const uint8_t *rep)
++{
++    /* rep: [mods][0x00][k0..k5] */
++    /* Apply to internal keyboard state and raise an interrupt. */
++    /* The exact API varies; adjust the following pseudo-calls as needed. */
++    /* Example pseudo-logic: */
++    /* memcpy(s->kbd_report, rep, 8); */
++    /* usb_hid_queue_report(s, s->kbd_report, 8); */
++    /* usb_hid_kbd_changed(s); */
++}
++
++static void usb_kbd_chr_read(void *opaque, const uint8_t *buf, int size)
++{
++    USBHIDState *s = opaque;
++    while (size > 0) {
++        int n = MIN(size, 8 - s->sock_len);
++        memcpy(s->sock_buf + s->sock_len, buf, n);
++        s->sock_len += n;
++        buf += n;
++        size -= n;
++        if (s->sock_len == 8) {
++            usb_kbd_push_report(s, s->sock_buf);
++            s->sock_len = 0;
++        }
++    }
++}
++
+ static void usb_hid_handle_reset(USBDevice *dev)
+ {
+     USBHIDState *s = (USBHIDState *) dev;
+@@ -150,6 +172,18 @@ static void usb_hid_class_initfn(ObjectClass *klass, void *data)
+     uc->product_desc   = "QEMU USB HID Keyboard/Mouse";
+     uc->usb_version    = 0x0110;
+ }
++
++static void usb_kbd_realize(USBDevice *dev, Error **errp)
++{
++    USBHIDState *s = (USBHIDState *)dev;
++    /* Existing realize work... */
++    if (qemu_chr_fe_backend_connected(&s->kbd_chr)) {
++        qemu_chr_fe_set_handlers(&s->kbd_chr,
++                                 usb_kbd_chr_can_read,
++                                 usb_kbd_chr_read,
++                                 NULL, NULL, s, NULL, true);
++    }
++}
+
+ static const VMStateDescription vmstate_usb_hid = {
+     .name = "usb-hid",
+@@ -200,6 +234,20 @@ static Property usb_hid_properties[] = {
+     /* Existing properties... */
++    DEFINE_PROP_CHR("chardev", USBHIDState, kbd_chr),
+     DEFINE_PROP_END_OF_LIST(),
+ };
+
+ static void usb_hid_initfn(Object *obj)
+ {
+     USBHIDState *s = USB_HID(obj);
++    s->sock_len = 0;
+ }
+
+ static const TypeInfo usb_hid_info = {
+     .name          = TYPE_USB_HID,
+     .parent        = TYPE_USB_DEVICE,
+-    .instance_size = sizeof(USBHIDState),
++    .instance_size = sizeof(USBHIDState),
++    /* Ensure realize sets handlers */
++    .class_init    = usb_hid_class_initfn,
+ };
+
+ static void usb_hid_register_types(void)
+ {
+     type_register_static(&usb_hid_info);
+ }
+ type_init(usb_hid_register_types);
