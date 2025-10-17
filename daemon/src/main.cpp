@@ -57,8 +57,11 @@ static void parse_args(int argc, char** argv, Args& a) {
 class HidSocket
 {
 public:
-    explicit HidSocket(const std::string& path, bool verbose = false) : path_(path), verbose_(verbose) {}
-    ~HidSocket() { if (fd_>= 0) close(fd_); }
+    explicit HidSocket(const std::string& path, bool verbose = false) : path_(path), verbose_(verbose)
+    {
+    }
+
+    ~HidSocket() { if (fd_ >= 0) close(fd_); }
 
     bool ensure_connected()
     {
@@ -101,9 +104,9 @@ private:
 
 int main(int argc, char** argv) {
     Args args;
-    parse_args(argc, argv);
+    parse_args(argc, argv, args);
 
-    signal(SIGINT, [](int){ g_running = false; });
+    signal(SIGINT, [](int) { g_running = false; });
     signal(SIGTERM, [](int) { g_running = false; });
 
     if (args.verbose)
