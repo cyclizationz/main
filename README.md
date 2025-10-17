@@ -1,4 +1,4 @@
-# HIDra
+# QuicKeys (former working title "HIDra")
 
 Robust, low-latency remote keyboard input via **USB-HID in QEMU**, using **UDP edges** + **QUIC snapshots (msquic)** and **protobuf**.
 

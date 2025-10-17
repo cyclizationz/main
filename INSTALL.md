@@ -1,4 +1,4 @@
-# INSTALL.md — HIDra Setup (Ubuntu 22.04+)
+# INSTALL.md — QuicKeys Setup (Ubuntu 22.04+)
 
 ## System Dependencies
 ```bash
