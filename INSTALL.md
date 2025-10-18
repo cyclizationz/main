@@ -55,10 +55,11 @@ ln -sf build/daemon ../bin_daemon   # convenience link
 git clone https://gitlab.com/qemu-project/qemu.git
 cd qemu
 git checkout v8.2.0
-git apply QuicKeys/qemu/patches/0001-usb-hid-socket-backend.patch
+git apply QuicKeys/qemu/patches/0001-usb-hid-socket-backend.patch # paste the dev-hid.c file in /qemu/hw/usb/ to your install dir and replace the original if fails
 mkdir build && cd build
-./configure --target-list=x86_64-softmmu --enable-kvm --enable-usb-redir \
-  --extra-ldflags="-latomic"
+../configure --target-list=x86_64-softmmu --enable-kvm --enable-usb-redir \
+--extra-ldflags="-latomic" \ # link libatomic if you want to build with tcg
+# --disable-tcg # uncomment if you do not need tcg
 make -j$(nproc)
 ln -sf $(pwd)/qemu-system-x86_64 ~/bin/qemu-QuicKeys
 ```

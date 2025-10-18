@@ -8,7 +8,7 @@ MsQuicServer::~MsQuicServer() { stop(); }
 
 bool MsQuicServer::start(const std::string& bind, uint16_t port, const std::string& alpn, OnSnapshot cb) {
     on_snapshot_ = std::move(cb);
-    if (MsQuicOpen(&Api) != QUIC_STATUS_SUCCESS) return false;
+    if (MsQuicOpen2(&Api) != QUIC_STATUS_SUCCESS) return false;
 
     QUIC_REGISTRATION_CONFIG regCfg = { "hidra", QUIC_EXECUTION_PROFILE_LOW_LATENCY };
     if (Api->RegistrationOpen(&regCfg, &Registration) != QUIC_STATUS_SUCCESS) return false;
